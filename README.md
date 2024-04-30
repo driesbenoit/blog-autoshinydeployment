@@ -35,7 +35,7 @@ The location blok makes sure that requests to the webhook url will run cgi scrip
 The `ScriptAlias` line links the mywebhooks url to a physical directory on the vps. The `ProxyPass` lines make sure that all requests to mywebhooks are *not* forwarded to the shiny-server on the localhost, but all other requests are.
 
 ## Test the current set-up
-At this point you can do an intermediate test by creating a small cgi script that returns some text when the webhook is triggered, which can be done by simply visiting the url of the webhook in your browser. Note that your script should adhere the cgi format, so it has to return minimal headers to be executed properly. Also, the owner of the script and the directory of the cgi scripts should be the process that is trying to execute the script (most likeliy that will be apache/nginx). Check your cgi log to see the userid of the user that is trying to run the script if in doubt. And of course, do not forget to make the script executable (`chmod +x myscript.py`). Here is an example script:
+At this point you can do an intermediate test by creating a small cgi script that returns some text when the webhook is triggered, which can be done by simply visiting the url of the webhook in your browser. Note that your script should adhere the cgi format, so it has to return minimal headers to be executed properly. Also, the owner of the script and the directory of the cgi scripts should be the process that is trying to execute the script (most likely that will be apache/nginx). Check your cgi log to see the userid of the user that is trying to run the script if in doubt. And of course, do not forget to make the script executable (`chmod +x myscript.py`). Here is an example script:
 
 ```python
 #!/usr/bin/env python3
@@ -65,7 +65,7 @@ print(html_content)
 ```
 
 ## Adjust the testscript to perform a git pull
-Once this is working, the testscript above can be adjusted so that instead of printing HTML, it now pulls the changes from the remote. Note that it is necessary that the process that is executing the script (again, this will most likely be apache/nginx) has the required (write) permissions for the repository and directory it resides in on the vps. Also, you'll have to make sure that the user executing the script on the vps can pull without providing a password. This can be done by setting up the usual ssh public/private key pair and add the public key to your online repo. Again, see the [Bitbucket docs](https://support.atlassian.com/bitbucket-cloud/docs/set-up-personal-ssh-keys-on-linux/ "Bitbucket Docs").
+Once this is working, the testscript above can be adjusted so that instead of printing HTML, it now pulls the changes from the remote. Note that it is necessary that the process that is executing the script (again, this will most likely be apache/nginx) has the required (write) permissions for the repository and directory it resides in on the vps. Also, you'll have to make sure that the user executing the script on the vps can pull without providing a password. This can be done by setting up the usual ssh public/private key pair and add the public key to your Bitbucket/Github account. Again, see the [Bitbucket docs](https://support.atlassian.com/bitbucket-cloud/docs/set-up-personal-ssh-keys-on-linux/ "Bitbucket Docs").
 
 ```python
 #!/usr/bin/env python3
