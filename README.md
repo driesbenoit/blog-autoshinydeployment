@@ -123,5 +123,207 @@ else:
 
 You can test this setup by pushing a new commit to the remote repo on Bitbucket and doublecheck that the vps automatically pulled in this change. Note that it is recommended not to store your secret directly in the cgi script, but to let the script access the secret in a different location.
 
+
+# UPDATE: Bitbucket Auto-Deployment for Shiny Apps using Flask and Webhooks
+
+I had to migrate my server and ended up using a slightly different approach.
+This document describes a secure and lightweight method to automatically deploy a Shiny app from a Bitbucket repository to a VPS after a push event.
+
+## Overview
+
+Whenever a commit is pushed to the Bitbucket repository, Bitbucket triggers a webhook pointing to your VPS. A minimal Flask app handles this webhook securely, verifies it using HMAC, and runs a `git pull` in the app directory.
+
+### Stack
+
+- Bitbucket: Git hosting with webhook support
+- Flask: Python microframework handling the webhook
+- Nginx: Handles HTTPS and routes `/webhooks/...` to Flask
+- Systemd: Manages the webhook service
+- Shiny Server: Hosts the R-based app (on port 3838)
+
+## 1. Flask Webhook Handler
+
+Create the following Python file (e.g. `~/webhooks/deploy.py`):
+
+```python
+#!/usr/bin/python3
+
+from flask import Flask, request, abort
+import hmac
+import hashlib
+import subprocess
+
+app = Flask(__name__)
+
+REPO_PATH = "/path/to/your/shiny/app"
+SECRET = b"your_shared_secret"  # Must match Bitbucket's webhook secret
+
+@app.route("/webhooks/your-endpoint", methods=["POST"])
+def webhook():
+    signature = request.headers.get('X-Hub-Signature')
+    if not signature:
+        abort(400)
+
+    try:
+        sha_name, signature = signature.split('=')
+    except ValueError:
+        abort(400)
+
+    if sha_name != 'sha256':
+        abort(400)
+
+    mac = hmac.new(SECRET, msg=request.data, digestmod=hashlib.sha256)
+    if not hmac.compare_digest(mac.hexdigest(), signature):
+        abort(403)
+
+    try:
+        subprocess.check_call(["git", "pull"], cwd=REPO_PATH)
+    except subprocess.CalledProcessError:
+        abort(500)
+
+    return "", 204
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5001)
+```
+
+Make sure it's executable:
+
+```bash
+chmod +x ~/webhooks/deploy.py
+```
+
+## 2. Systemd Service
+
+Create a unit file at `/etc/systemd/system/webhook-handler.service`:
+
+```ini
+[Unit]
+Description=Flask Webhook Handler for Bitbucket Auto-Deploy
+After=network.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/webhooks
+ExecStart=/usr/bin/python3 deploy.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reexec
+sudo systemctl enable --now webhook-handler.service
+```
+
+You can monitor logs via:
+
+```bash
+journalctl -u webhook-handler -f
+```
+
+## 3. Nginx Reverse Proxy
+
+In your Nginx config (e.g. `/etc/nginx/sites-available/your-domain`):
+
+```nginx
+server {
+    server_name your-domain.com;
+
+    location /webhooks/your-endpoint {
+        proxy_pass http://127.0.0.1:5001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3838;
+        proxy_redirect http://127.0.0.1:3838/ $scheme://$host/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    listen 443 ssl;
+    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+```
+
+Reload nginx:
+
+```bash
+sudo systemctl reload nginx
+```
+
+## 4. SSH Authentication with Bitbucket
+
+Ensure the VPS user can `git pull` without needing a password:
+
+1. Generate an SSH key (if needed):
+
+    ```bash
+    ssh-keygen -t ed25519 -C "deploy@yourdomain.com"
+    ```
+
+2. Add the public key (`~/.ssh/id_ed25519.pub`) to Bitbucket under:
+   Repository settings → Access keys
+
+3. Test SSH access:
+
+    ```bash
+    ssh -T git@bitbucket.org
+    ```
+
+It should return a success message without asking for a password.
+
+## 5. Bitbucket Webhook Setup
+
+In Bitbucket:
+
+- Go to Repository settings → Webhooks
+- URL: `https://your-domain.com/webhooks/your-endpoint`
+- Method: POST
+- Set a secret that matches the one in your Flask script
+- Enable push events
+- Save
+
+## 6. Security Considerations
+
+- Webhook signature is verified using HMAC-SHA256
+- Flask only listens on 127.0.0.1, not exposed to the internet
+- All requests are proxied via HTTPS with Nginx
+- Service runs as a non-root user (`youruser`)
+- Avoid logging sensitive request data
+
+## Final Checklist
+
+- [x] Flask app placed in secured directory
+- [x] Systemd service active and enabled
+- [x] Git access via SSH keys working
+- [x] Nginx forwarding `/webhooks/...` correctly
+- [x] Bitbucket webhook pointing to correct URL
+
+## Testing
+
+You can simulate a webhook call (without real signature validation) via:
+
+```bash
+curl -X POST http://127.0.0.1:5001/webhooks/your-endpoint
+```
+
+Once everything is configured, a `git push` to Bitbucket should automatically deploy your app on the VPS!
+
+
 If this tutorial was helpful to you, please star this repo, thanks!
 
